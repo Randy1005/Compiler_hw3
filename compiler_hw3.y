@@ -19,11 +19,14 @@ void insert_symbol(char *id, SEMTYPE type, DType data, int reg_num);
 int lookup_symbol(char *id);
 void dump_symbol();
 
-/*write code to .j file*/
-void writeCode(FILE *fp, char *code);
+/*write code to codeList*/
+void writeCode(char *buffer);
 
-/*delete output file "Computer.j" when error occured*/
-void deleteGenCode();
+/*print code to screen: for debugging*/
+void printCode();
+
+/*if no error occured, generate the code stored in code_list*/
+void genCode(FILE *fp);
 
 /*generate basic setup code*/
 void genHeader();
@@ -58,6 +61,12 @@ node *symTable[10];
 
 /*for generating labels*/
 int labelCount = 0;
+
+/*for storing code as linked list*/
+codeList *code_list = NULL;
+
+/*error flag*/
+int ERR = 0;
 
 %}
 
@@ -157,13 +166,13 @@ expr: equality_expr
         if(get_idType($1.id) == INT_t){
             char *buffer = (char *)malloc(512 * sizeof(char));
             sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
-            writeCode(file, buffer);
+            writeCode(buffer);
             free(buffer);
         }
         else if(get_idType($1.id) == FLOAT_t){
             char *buffer = (char *)malloc(512 * sizeof(char));
             sprintf(buffer, "\tfstore %d", lookup_symbol($1.id));
-            writeCode(file, buffer);
+            writeCode(buffer);
             free(buffer);
         }
     }
@@ -179,13 +188,13 @@ expr: equality_expr
             if($1.type == INT_t){
                 char *buffer = (char *)malloc(512 * sizeof(char));
                 sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
-                writeCode(file, buffer);
+                writeCode(buffer);
                 free(buffer);
             }
             else if($1.type == FLOAT_t){
                 char *buffer = (char *)malloc(512 * sizeof(char));
                 sprintf(buffer, "\tfstore %d", lookup_symbol($1.id));
-                writeCode(file, buffer);
+                writeCode(buffer);
                 free(buffer);
             }
 
@@ -199,13 +208,13 @@ expr: equality_expr
             if($1.type == INT_t){
                 char *buffer = (char *)malloc(512 * sizeof(char));
                 sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
-                writeCode(file, buffer);
+                writeCode(buffer);
                 free(buffer);
             }
             else if($1.type == FLOAT_t){
                 char *buffer = (char *)malloc(512 * sizeof(char));
                 sprintf(buffer, "\tfstore %d", lookup_symbol($1.id));
-                writeCode(file, buffer);
+                writeCode(buffer);
                 free(buffer);
             }
 
@@ -219,21 +228,20 @@ expr: equality_expr
             if($1.type == INT_t){
                 char *buffer = (char *)malloc(512 * sizeof(char));
                 sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
-                writeCode(file, buffer);
+                writeCode(buffer);
                 free(buffer);
             }
             else if($1.type == FLOAT_t){
                 char *buffer = (char *)malloc(512 * sizeof(char));
                 sprintf(buffer, "\tfstore %d", lookup_symbol($1.id));
-                writeCode(file, buffer);
+                writeCode(buffer);
                 free(buffer);
             }
         }
         else if($2 == DIVASGN_t){
             if($3.f_val == 0){
                 printf("<<ERROR>> Divide By Zero. [line %d]\n", yylineno);
-                deleteGenCode();
-                exit(1);
+                ERR = 1;
             }
             else{
                 /*update symbol table*/
@@ -244,13 +252,13 @@ expr: equality_expr
                 if($1.type == INT_t){
                     char *buffer = (char *)malloc(512 * sizeof(char));
                     sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
-                    writeCode(file, buffer);
+                    writeCode(buffer);
                     free(buffer);
                 }
                 else if($1.type == FLOAT_t){
                     char *buffer = (char *)malloc(512 * sizeof(char));
                     sprintf(buffer, "\tfstore %d", lookup_symbol($1.id));
-                    writeCode(file, buffer);
+                    writeCode(buffer);
                     free(buffer);
                 }
             }
@@ -258,13 +266,11 @@ expr: equality_expr
         else if($2 == MODASGN_t){
             if($3.f_val == 0){
                 printf("<<ERROR>> MOD By Zero. [line %d]\n", yylineno);
-                deleteGenCode();
-                exit(1);
+                ERR = 1;
             }
             else if($3.type == FLOAT_t){
                 printf("<<ERROR>> MOD involving float32 type. [line %d]\n", yylineno);
-                deleteGenCode();
-                exit(1);
+                ERR = 1;
             }
             else{
                 /*update symbol table*/
@@ -275,13 +281,13 @@ expr: equality_expr
                 if($1.type == INT_t){
                     char *buffer = (char *)malloc(512 * sizeof(char));
                     sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
-                    writeCode(file, buffer);
+                    writeCode(buffer);
                     free(buffer);
                 }
                 else if($1.type == FLOAT_t){
                     char *buffer = (char *)malloc(512 * sizeof(char));
                     sprintf(buffer, "\tfstore %d", lookup_symbol($1.id));
-                    writeCode(file, buffer);
+                    writeCode(buffer);
                     free(buffer);
                 }
 
@@ -339,14 +345,12 @@ multiplicative_expr: prefix_expr    {$$ = $1;}
     {
         if($3.f_val == 0 && $2 == DIV_t){ //error: divide by 0
             printf("<<ERROR>> Divide By Zero. [line %d]\n", yylineno);
-            deleteGenCode();
-            exit(1);
+            ERR = 1;
         }
 
         if($3.f_val == 0 && $2 == MOD_t){ //error: mod by 0
             printf("<<ERROR>> MOD By Zero. [line %d]\n", yylineno);
-            deleteGenCode();
-            exit(1);
+            ERR = 1;
         }
 
         arithmeticCast($1.type, $3.type, $2); // write code
@@ -381,20 +385,19 @@ primary_expr: ID
             {
                 if(lookup_symbol($1.id) == -1){ //error: ID not in symbol table
                     printf("<<ERROR>> Variable \"%s\" Undeclared. [line %d]", $1.id, yylineno);
-                    deleteGenCode();
-                    exit(1);
+                    ERR = 1;
                 }
                 else{
                     if(get_idType($1.id) == INT_t){
                         char *buffer = (char *)malloc(512 * sizeof(char));
                         sprintf(buffer, "\tiload %d", lookup_symbol($1.id));
-                        writeCode(file, buffer);
+                        writeCode(buffer);
                         free(buffer);
                     }
                     else if(get_idType($1.id) == FLOAT_t){
                         char *buffer = (char *)malloc(512 * sizeof(char));
                         sprintf(buffer, "\tfload %d", lookup_symbol($1.id));
-                        writeCode(file, buffer);
+                        writeCode(buffer);
                         free(buffer);
                         // float32_occur = 1;
                     }
@@ -412,7 +415,7 @@ primary_expr: ID
                 sprintf(buffer, "\tldc %.6lf", $1.f_val);
                 // float32_occur = 1;
             }
-            writeCode(file, buffer);
+            writeCode(buffer);
             free(buffer);
             $$ = $1;
         }
@@ -436,26 +439,26 @@ print_func: print_func_op '(' equality_expr ')' NEWLINE
             {
                 if($1 == PRINT_t){
                     if(get_idType($3.id) == INT_t){
-                        writeCode(file, "\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
-                        writeCode(file, "\tswap");
-                        writeCode(file, "\tinvokevirtual java/io/PrintStream/print(I)V");
+                        writeCode("\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
+                        writeCode("\tswap");
+                        writeCode("\tinvokevirtual java/io/PrintStream/print(I)V");
                     }
                     else if(get_idType($3.id) == FLOAT_t){
-                        writeCode(file, "\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
-                        writeCode(file, "\tswap");
-                        writeCode(file, "\tinvokevirtual java/io/PrintStream/print(F)V");
+                        writeCode("\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
+                        writeCode("\tswap");
+                        writeCode("\tinvokevirtual java/io/PrintStream/print(F)V");
                     }
                 }
                 else if($1 == PRINTLN_t){
                     if(get_idType($3.id) == INT_t){
-                        writeCode(file, "\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
-                        writeCode(file, "\tswap");
-                        writeCode(file, "\tinvokevirtual java/io/PrintStream/println(I)V");
+                        writeCode("\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
+                        writeCode("\tswap");
+                        writeCode("\tinvokevirtual java/io/PrintStream/println(I)V");
                     }
                     else if(get_idType($3.id) == FLOAT_t){
-                        writeCode(file, "\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
-                        writeCode(file, "\tswap");
-                        writeCode(file, "\tinvokevirtual java/io/PrintStream/println(F)V");
+                        writeCode("\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
+                        writeCode("\tswap");
+                        writeCode("\tinvokevirtual java/io/PrintStream/println(F)V");
                     }
                 }
             }
@@ -465,23 +468,23 @@ print_func: print_func_op '(' equality_expr ')' NEWLINE
             // ldc STRING
             char *buffer = (char *)malloc(512 * sizeof(char));
             sprintf(buffer, "\tldc \"%s\"", $4.string);
-            writeCode(file, buffer);
+            writeCode(buffer);
             free(buffer);
 
-            writeCode(file, "\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
-            writeCode(file, "\tswap");
-            writeCode(file, "\tinvokevirtual java/io/PrintStream/print(Ljava/lang/String;)V");
+            writeCode("\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
+            writeCode("\tswap");
+            writeCode("\tinvokevirtual java/io/PrintStream/print(Ljava/lang/String;)V");
         }
         else if($1 == PRINTLN_t){
             // ldc STRING
             char *buffer = (char *)malloc(512 * sizeof(char));
             sprintf(buffer, "\tldc \"%s\"", $4.string);
-            writeCode(file, buffer);
+            writeCode(buffer);
             free(buffer);
 
-            writeCode(file, "\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
-            writeCode(file, "\tswap");
-            writeCode(file, "\tinvokevirtual java/io/PrintStream/println(Ljava/lang/String;)V");
+            writeCode("\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
+            writeCode("\tswap");
+            writeCode("\tinvokevirtual java/io/PrintStream/println(Ljava/lang/String;)V");
         }
     }
 ;
@@ -500,6 +503,10 @@ int main(int argc, char** argv)
     genHeader(); //header code
     yyparse();
     genFooter(); //footer code
+
+    //printCode();
+    if(!ERR)
+        genCode(file);
 
     dump_symbol();
 
@@ -648,46 +655,82 @@ void dump_symbol()
     }
 }
 
-void writeCode(FILE *fp, char *code){
-    fp = fopen("Computer.j", "a");
+void genCode(FILE *fp){
+    codeList *tmp;
+    fp = fopen("Computer.j", "w");
     if (fp == NULL)
         printf("error opening file.\n");
-    else
-        fprintf(fp, "%s\n", code);
-
+    else{
+        tmp = code_list;
+        while(tmp != NULL){
+            fprintf(fp, "%s\n", tmp -> code);
+            tmp = tmp -> nextline;
+        }
+    }
     fclose(fp);
 }
 
+void writeCode(char *buffer)
+{
+    if(code_list == NULL){
+        code_list = (codeList *)malloc(sizeof(codeList));
+        code_list -> code = (char *)malloc(512 * sizeof(char));
+        strcpy(code_list -> code, buffer);
+        code_list -> nextline = NULL;
+    }
+    else{
+        codeList *curr = code_list;
+        while(curr -> nextline != NULL)
+            curr = curr -> nextline;
+
+        /*append codeList node*/
+        curr -> nextline = (codeList *)malloc(sizeof(codeList));
+        curr -> nextline -> code = (char *)malloc(512 * sizeof(char));
+        strcpy(curr -> nextline -> code, buffer);
+        curr -> nextline -> nextline = NULL;
+    }
+}
+
+void printCode()
+{
+    codeList *curr = code_list;
+
+    while(curr != NULL){
+        printf("%s\n", curr -> code);
+        curr = curr -> nextline;
+    }
+}
+
+
 void genHeader()
 {
-    writeCode(file, ".class public main");
-    writeCode(file, ".super java/lang/Object");
-    writeCode(file, ".method public static main([Ljava/lang/String;)V");
-    writeCode(file, ".limit stack 10");
-    writeCode(file, ".limit locals 10");
+    writeCode(".class public main");
+    writeCode(".super java/lang/Object");
+    writeCode(".method public static main([Ljava/lang/String;)V");
+    writeCode(".limit stack 10");
+    writeCode(".limit locals 10");
 }
 
 void genFooter()
 {
-    writeCode(file, "return");
-    writeCode(file, ".end method");
+    writeCode("return");
+    writeCode(".end method");
 }
 
 void defVar(char *id, SEMTYPE type, double val)
 {
     if(lookup_symbol(id) != -1){
         printf("<<ERROR>> Variable \"%s\" Redefined. [line %d]\n", id, yylineno);
-        deleteGenCode(); // error: delete output file
-        exit(1); // exit program directly
+        ERR = 1;
     }
     else{
         if(type == INT_t){ //int type
             /*write code to file*/
             char *buffer = (char *)malloc(512 * sizeof(char));
             sprintf(buffer, "\tldc %d", (int)val); //ldc (value)
-            writeCode(file, buffer);
+            writeCode(buffer);
             sprintf(buffer, "\tistore %d", idx); //istore (stkcnt)
-            writeCode(file, buffer);
+            writeCode(buffer);
             free(buffer);
 
             /*symbol table update*/
@@ -700,9 +743,9 @@ void defVar(char *id, SEMTYPE type, double val)
             /*write code to file*/
             char *buffer = (char *)malloc(512 * sizeof(char));
             sprintf(buffer, "\tldc %.6lf", val); //ldc (value)
-            writeCode(file, buffer);
+            writeCode(buffer);
             sprintf(buffer, "\tfstore %d", idx); //fstore (stkcnt)
-            writeCode(file, buffer);
+            writeCode(buffer);
             free(buffer);
 
             /*symbol table update*/
@@ -715,64 +758,53 @@ void defVar(char *id, SEMTYPE type, double val)
 
 }
 
-void deleteGenCode()
-{
-    // int deleteFailed = remove("Computer.j"); //indicating delete output file success or not
-
-    // if(deleteFailed)
-    //     printf("Unable to remove \"Computer.j\"\n");
-    // else
-    //     printf("Compile Error: Code Generation Failed.\n");
-
-}
 
 void arithmeticCast(SEMTYPE from, SEMTYPE to, OPERATOR op)
 {
     if(from == to){ //if no need to cast, just perform arithmetic op
         if(from == INT_t){
             if(op == ADD_t){
-                writeCode(file, "\tiadd");
+                writeCode("\tiadd");
             }
             else if(op == SUB_t){
-                writeCode(file, "\tisub");
+                writeCode("\tisub");
             }
             else if(op == MUL_t){
-                writeCode(file, "\timul");
+                writeCode("\timul");
             }
             else if(op == DIV_t){
-                writeCode(file, "\tidiv");
+                writeCode("\tidiv");
             }
             else if(op == MOD_t){
-                writeCode(file, "\tirem");
+                writeCode("\tirem");
             }
         }
         else if(from == FLOAT_t){
             if(op == ADD_t){
-                writeCode(file, "\tfadd");
+                writeCode("\tfadd");
             }
             else if(op == SUB_t){
-                writeCode(file, "\tfsub");
+                writeCode("\tfsub");
             }
             else if(op == MUL_t){
-                writeCode(file, "\tfmul");
+                writeCode("\tfmul");
             }
             else if(op == DIV_t){
-                writeCode(file, "\tfdiv");
+                writeCode("\tfdiv");
             }
             else if(op == MOD_t){ //error: mod involving float32
                 printf("<<ERROR>> MOD involving float32 type. [line %d]\n", yylineno);
-                deleteGenCode();
-                exit(1);
+                ERR = 1;
             }
         }
     }
     else{ //TODO: casting
         /*
         if(from == INT_t && to == FLOAT_t){
-            writeCode(file, "\ti2f");
+            writeCode("\ti2f");
         }
         else if(from == FLOAT_t && to == INT_t){
-            writeCode(file, "\tf2i");
+            writeCode("\tf2i");
         }
         */
     }

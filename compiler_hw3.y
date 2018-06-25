@@ -1,0 +1,869 @@
+/*	Definition section */
+%{
+#include "common.h" //Extern variables that communicate with lex
+
+extern int yylineno;
+extern int yylex();
+
+/*display enum text*/
+static char *SEM_str[] = {"VOID_t", "INT_t", "FLOAT_t", "STRING_t"};
+static char *OP_str[] = {"ADD_t", "SUB_t", "MUL_t", "DIV_t", "MOD_t", "LT_t", "LE_t", "EQ_t", "GE_t", "GT_t", "NE_t", "AND_t", "OR_t", "NOT_t", "NONE_t",  "ADDASGN_t", "SUBASGN_t", "MULASGN_t", "DIVASGN_t", "MODASGN_t"};
+
+FILE *file;
+
+void yyerror(const char* error);
+
+/* symbol table function */
+void create_symbol();
+void insert_symbol(char *id, SEMTYPE type, DType data, int reg_num);
+int lookup_symbol(char *id);
+void dump_symbol();
+
+/*write code to .j file*/
+void writeCode(FILE *fp, char *code);
+
+/*delete output file "Computer.j" when error occured*/
+void deleteGenCode();
+
+/*generate basic setup code*/
+void genHeader();
+void genFooter();
+
+/*generate varible definition code*/
+void defVar(char *id, SEMTYPE type, double val);
+
+/*arithmetic casting*/
+void arithmeticCast(SEMTYPE from, SEMTYPE to, OPERATOR op);
+
+/*get ID type*/
+SEMTYPE get_idType(char *id);
+
+/*assign value to id (purpose: update symbol table)*/
+void assign_id(char *id, double val);
+
+/*get id value*/
+double get_idVal(char *id);
+
+/*count variables*/
+int varCount = 0;
+
+/*flag to indicate float32 ID occurrence*/
+// int float32_occur;
+
+int symTableSize = 10; //the hashing key will be 0 ~ 9
+int idx = 0; //for assigning index to entries (not actual keys)
+
+/*for symbol table*/
+node *symTable[10];
+
+/*for generating labels*/
+int labelCount = 0;
+
+%}
+
+%union {
+    RULE_TYPE rule_type;
+    int intVal;
+}
+
+/* Token definition */
+%token INC DEC
+%token MTE LTE EQ NE
+%token <rule_type> ADDASGN SUBASGN MULASGN DIVASGN MODASGN
+%token AND OR NOT
+%token PRINT PRINTLN
+%token IF ELSE FOR
+%token VAR
+%token QUOTA
+%token NEWLINE
+
+%token <rule_type> I_CONST
+%token <rule_type> F_CONST
+%token <rule_type> VOID INT FLOAT STRING ID
+
+%type <rule_type> initializer expr equality_expr relational_expr
+%type <rule_type> additive_expr multiplicative_expr prefix_expr postfix_expr
+%type <rule_type> primary_expr constant
+%type <rule_type> type
+
+%type <intVal> add_op mul_op print_func_op assignment_op equality_op relational_op
+
+
+%start program
+
+%right ')' ELSE
+
+/* Grammar section */
+%%
+
+
+program: program stat
+    |
+;
+
+stat: declaration
+    | compound_stat
+    | expression_stat
+    | print_func
+    | selection_stat
+;
+
+declaration: VAR ID type '=' initializer NEWLINE
+            {
+                //printf("ID = %s\n", $2.id);
+                defVar($2.id, $3.type, $5.f_val);
+                VAR_flag = 0;
+            }
+    | VAR ID type NEWLINE
+    {
+        //printf("ID = %s\n", $2.id);
+        defVar($2.id, $3.type, 0);
+        VAR_flag = 0;
+    }
+;
+
+type: INT   {$$ = $1; /*printf("$$ = %s\n", SEM_str[$$.type]);*/ }
+    | FLOAT {$$ = $1; /*printf("$$ = %s\n", SEM_str[$$.type]);*/ }
+    | VOID  {$$ = $1; /*printf("$$ = %s\n", SEM_str[$$.type]);*/ }
+;
+
+initializer: equality_expr
+;
+
+compound_stat: '{' '}'
+    | '{' block_item_list '}'
+;
+
+block_item_list: block_item
+    | block_item_list block_item
+;
+
+block_item: stat
+;
+
+selection_stat: IF '(' expr ')' stat ELSE stat
+    | IF '(' expr ')' stat
+;
+
+expression_stat: expr NEWLINE
+    | NEWLINE
+;
+
+expr: equality_expr
+    | ID '=' expr
+    {
+        assign_id($1.id, $3.f_val);
+
+        if(get_idType($1.id) == INT_t){
+            char *buffer = (char *)malloc(512 * sizeof(char));
+            sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
+            writeCode(file, buffer);
+            free(buffer);
+        }
+        else if(get_idType($1.id) == FLOAT_t){
+            char *buffer = (char *)malloc(512 * sizeof(char));
+            sprintf(buffer, "\tfstore %d", lookup_symbol($1.id));
+            writeCode(file, buffer);
+            free(buffer);
+        }
+    }
+    | prefix_expr assignment_op expr
+    {
+        // printf("assign op = %s\n", OP_str[$2]);
+        if($2 == ADDASGN_t){
+            /*update symbol table*/
+            assign_id($1.id, get_idVal($1.id) + $3.f_val);
+
+            /*generate code*/
+            arithmeticCast($1.type, $3.type, ADD_t);
+            if($1.type == INT_t){
+                char *buffer = (char *)malloc(512 * sizeof(char));
+                sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
+                writeCode(file, buffer);
+                free(buffer);
+            }
+            else if($1.type == FLOAT_t){
+                char *buffer = (char *)malloc(512 * sizeof(char));
+                sprintf(buffer, "\tfstore %d", lookup_symbol($1.id));
+                writeCode(file, buffer);
+                free(buffer);
+            }
+
+        }
+        else if($2 == SUBASGN_t){
+            /*update symbol table*/
+            assign_id($1.id, get_idVal($1.id) - $3.f_val);
+
+            /*generate code*/
+            arithmeticCast($1.type, $3.type, SUB_t);
+            if($1.type == INT_t){
+                char *buffer = (char *)malloc(512 * sizeof(char));
+                sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
+                writeCode(file, buffer);
+                free(buffer);
+            }
+            else if($1.type == FLOAT_t){
+                char *buffer = (char *)malloc(512 * sizeof(char));
+                sprintf(buffer, "\tfstore %d", lookup_symbol($1.id));
+                writeCode(file, buffer);
+                free(buffer);
+            }
+
+        }
+        else if($2 == MULASGN_t){
+            /*update symbol table*/
+            assign_id($1.id, get_idVal($1.id) * $3.f_val);
+
+            /*generate code*/
+            arithmeticCast($1.type, $3.type, MUL_t);
+            if($1.type == INT_t){
+                char *buffer = (char *)malloc(512 * sizeof(char));
+                sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
+                writeCode(file, buffer);
+                free(buffer);
+            }
+            else if($1.type == FLOAT_t){
+                char *buffer = (char *)malloc(512 * sizeof(char));
+                sprintf(buffer, "\tfstore %d", lookup_symbol($1.id));
+                writeCode(file, buffer);
+                free(buffer);
+            }
+        }
+        else if($2 == DIVASGN_t){
+            if($3.f_val == 0){
+                printf("<<ERROR>> Divide By Zero. [line %d]\n", yylineno);
+                deleteGenCode();
+                exit(1);
+            }
+            else{
+                /*update symbol table*/
+                assign_id($1.id, get_idVal($1.id) / $3.f_val);
+
+                /*generate code*/
+                arithmeticCast($1.type, $3.type, DIV_t);
+                if($1.type == INT_t){
+                    char *buffer = (char *)malloc(512 * sizeof(char));
+                    sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
+                    writeCode(file, buffer);
+                    free(buffer);
+                }
+                else if($1.type == FLOAT_t){
+                    char *buffer = (char *)malloc(512 * sizeof(char));
+                    sprintf(buffer, "\tfstore %d", lookup_symbol($1.id));
+                    writeCode(file, buffer);
+                    free(buffer);
+                }
+            }
+        }
+        else if($2 == MODASGN_t){
+            if($3.f_val == 0){
+                printf("<<ERROR>> MOD By Zero. [line %d]\n", yylineno);
+                deleteGenCode();
+                exit(1);
+            }
+            else if($3.type == FLOAT_t){
+                printf("<<ERROR>> MOD involving float32 type. [line %d]\n", yylineno);
+                deleteGenCode();
+                exit(1);
+            }
+            else{
+                /*update symbol table*/
+                assign_id($1.id, (int)get_idVal($1.id) % (int)$3.f_val);
+
+                /*generate code*/
+                arithmeticCast($1.type, $3.type, MOD_t);
+                if($1.type == INT_t){
+                    char *buffer = (char *)malloc(512 * sizeof(char));
+                    sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
+                    writeCode(file, buffer);
+                    free(buffer);
+                }
+                else if($1.type == FLOAT_t){
+                    char *buffer = (char *)malloc(512 * sizeof(char));
+                    sprintf(buffer, "\tfstore %d", lookup_symbol($1.id));
+                    writeCode(file, buffer);
+                    free(buffer);
+                }
+
+            }
+
+        }
+
+    }
+;
+
+assignment_op: ADDASGN  {$$ = ADDASGN_t;}
+    | SUBASGN   {$$ = SUBASGN_t;}
+    | MULASGN   {$$ = MULASGN_t;}
+    | DIVASGN   {$$ = DIVASGN_t;}
+    | MODASGN   {$$ = MODASGN_t;}
+;
+
+equality_expr: relational_expr
+    | equality_expr equality_op relational_expr
+;
+
+equality_op: EQ
+    | NE
+;
+
+relational_expr: additive_expr
+    | relational_expr relational_op additive_expr
+;
+
+relational_op: '<'
+    | '>'
+    | LTE
+    | MTE
+;
+
+additive_expr: multiplicative_expr  {$$ = $1;}
+    | additive_expr add_op multiplicative_expr
+    {
+        arithmeticCast($1.type, $3.type, $2); //write code
+
+        /*return values*/
+        if($2 == ADD_t)
+            $$.f_val = $1.f_val + $3.f_val;
+        else if($2 == SUB_t)
+            $$.f_val = $1.f_val - $3.f_val;
+    }
+;
+
+add_op: '+' {$$ = ADD_t;}
+    | '-'   {$$ = SUB_t;}
+;
+
+multiplicative_expr: prefix_expr    {$$ = $1;}
+    | multiplicative_expr mul_op prefix_expr
+    {
+        if($3.f_val == 0 && $2 == DIV_t){ //error: divide by 0
+            printf("<<ERROR>> Divide By Zero. [line %d]\n", yylineno);
+            deleteGenCode();
+            exit(1);
+        }
+
+        if($3.f_val == 0 && $2 == MOD_t){ //error: mod by 0
+            printf("<<ERROR>> MOD By Zero. [line %d]\n", yylineno);
+            deleteGenCode();
+            exit(1);
+        }
+
+        arithmeticCast($1.type, $3.type, $2); // write code
+
+        /*return values*/
+        if($2 == MUL_t)
+            $$.f_val = $1.f_val * $3.f_val;
+        else if($2 == DIV_t)
+            $$.f_val = $1.f_val / $3.f_val;
+        else if($2 == MOD_t)
+            $$.i_val = (int)$1.f_val % (int)$3.f_val;
+
+    }
+;
+
+mul_op: '*' {$$ = MUL_t;}
+    | '/'   {$$ = DIV_t;}
+    | '%'   {$$ = MOD_t;}
+;
+
+prefix_expr: postfix_expr
+    | INC prefix_expr
+    | DEC prefix_expr
+;
+
+postfix_expr: primary_expr
+    | postfix_expr INC
+    | postfix_expr DEC
+;
+
+primary_expr: ID
+            {
+                if(lookup_symbol($1.id) == -1){ //error: ID not in symbol table
+                    printf("<<ERROR>> Variable \"%s\" Undeclared. [line %d]", $1.id, yylineno);
+                    deleteGenCode();
+                    exit(1);
+                }
+                else{
+                    if(get_idType($1.id) == INT_t){
+                        char *buffer = (char *)malloc(512 * sizeof(char));
+                        sprintf(buffer, "\tiload %d", lookup_symbol($1.id));
+                        writeCode(file, buffer);
+                        free(buffer);
+                    }
+                    else if(get_idType($1.id) == FLOAT_t){
+                        char *buffer = (char *)malloc(512 * sizeof(char));
+                        sprintf(buffer, "\tfload %d", lookup_symbol($1.id));
+                        writeCode(file, buffer);
+                        free(buffer);
+                        // float32_occur = 1;
+                    }
+                    $$ = $1;
+                }
+            }
+    | constant
+    {
+        if(!VAR_flag){
+            char *buffer = (char *)malloc(512 * sizeof(char));
+            if($1.type == INT_t){
+                sprintf(buffer, "\tldc %d", (int)$1.f_val);
+            }
+            else if($1.type == FLOAT_t){
+                sprintf(buffer, "\tldc %.6lf", $1.f_val);
+                // float32_occur = 1;
+            }
+            writeCode(file, buffer);
+            free(buffer);
+            $$ = $1;
+        }
+    }
+    | '(' expr ')'  {$$ = $2;}
+;
+
+constant: I_CONST
+        {
+            $1.type = INT_t;
+            $$ = $1;
+        }
+    | F_CONST
+    {
+        $1.type = FLOAT_t;
+        $$ = $1;
+    }
+;
+
+print_func: print_func_op '(' equality_expr ')' NEWLINE
+            {
+                if($1 == PRINT_t){
+                    if(get_idType($3.id) == INT_t){
+                        writeCode(file, "\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
+                        writeCode(file, "\tswap");
+                        writeCode(file, "\tinvokevirtual java/io/PrintStream/print(I)V");
+                    }
+                    else if(get_idType($3.id) == FLOAT_t){
+                        writeCode(file, "\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
+                        writeCode(file, "\tswap");
+                        writeCode(file, "\tinvokevirtual java/io/PrintStream/print(F)V");
+                    }
+                }
+                else if($1 == PRINTLN_t){
+                    if(get_idType($3.id) == INT_t){
+                        writeCode(file, "\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
+                        writeCode(file, "\tswap");
+                        writeCode(file, "\tinvokevirtual java/io/PrintStream/println(I)V");
+                    }
+                    else if(get_idType($3.id) == FLOAT_t){
+                        writeCode(file, "\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
+                        writeCode(file, "\tswap");
+                        writeCode(file, "\tinvokevirtual java/io/PrintStream/println(F)V");
+                    }
+                }
+            }
+    | print_func_op '(' QUOTA STRING QUOTA ')' NEWLINE
+    {
+        if($1 == PRINT_t){
+            // ldc STRING
+            char *buffer = (char *)malloc(512 * sizeof(char));
+            sprintf(buffer, "\tldc \"%s\"", $4.string);
+            writeCode(file, buffer);
+            free(buffer);
+
+            writeCode(file, "\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
+            writeCode(file, "\tswap");
+            writeCode(file, "\tinvokevirtual java/io/PrintStream/print(Ljava/lang/String;)V");
+        }
+        else if($1 == PRINTLN_t){
+            // ldc STRING
+            char *buffer = (char *)malloc(512 * sizeof(char));
+            sprintf(buffer, "\tldc \"%s\"", $4.string);
+            writeCode(file, buffer);
+            free(buffer);
+
+            writeCode(file, "\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
+            writeCode(file, "\tswap");
+            writeCode(file, "\tinvokevirtual java/io/PrintStream/println(Ljava/lang/String;)V");
+        }
+    }
+;
+
+print_func_op: PRINT    {$$ = PRINT_t;}
+    | PRINTLN   {$$ = PRINTLN_t;}
+;
+
+%%
+
+/* C code section */
+int main(int argc, char** argv)
+{
+    yylineno = 0;
+
+    genHeader(); //header code
+    yyparse();
+    genFooter(); //footer code
+
+    dump_symbol();
+
+    return 0;
+}
+
+void yyerror (char const *s) {
+  fflush(stdout);
+  fprintf(stderr, "%s\n", s);
+}
+
+
+/*hashing function*/
+int strToKey(char *id)
+{
+    int cValue, s = 0;
+    for(int i=0; i<strlen(id); i++){
+        cValue = id[i];
+        s += cValue;
+    }
+
+    return s; //this gives us the sum of all the ascii value
+}
+
+/*create symbol table*/
+void create_symbol()
+{
+    printf("Create Symbol Table.\n");
+    for(int i=0; i<symTableSize; i++)
+        symTable[i] = NULL;
+}
+
+/*insert entry*/
+void insert_symbol(char *id, SEMTYPE type, DType data, int reg_num)
+{
+    int ascii, key;
+    node *tmp, *tmp2;
+    tmp = (node *)malloc(sizeof(node));
+    tmp -> next = NULL;
+
+    /*assign ID, index, type, and data*/
+    tmp -> id = (char *)malloc(256 * sizeof(char));
+    strcpy(tmp -> id, id);
+    tmp -> index = idx;
+    tmp -> type = type;
+    tmp -> data = data;
+    tmp -> reg_num = reg_num;
+
+    /*decide key from hashing function*/
+    ascii = strToKey(id);
+    key = ascii % symTableSize;
+
+    /*insert into symbol_table*/
+    if(symTable[key] == NULL){ //no entry inserted yet
+        symTable[key] = tmp;
+        idx++; //index increment
+        varCount++;
+        printf("insert a symbol: %s \n", tmp -> id);
+    }
+    else{ //already occupied, then append to it
+        tmp2 = symTable[key];
+        while(tmp2 -> next != NULL)
+            tmp2 = tmp2 -> next;
+
+        tmp2 -> next = tmp;
+        idx++; //index increment
+        varCount++;
+        printf("insert a symbol: %s \n", tmp -> id);
+    }
+}
+
+/*lookup entry, return index if exist*/
+int lookup_symbol(char *id)
+{
+    node *tmp;
+    int ascii = strToKey(id);
+    int key = ascii % symTableSize;
+
+    /*look up symTable*/
+    if(symTable[key] == NULL){
+        return -1; //no ID inserted yet
+    }
+    else{
+        tmp = symTable[key];
+        while(tmp != NULL){
+            if(!strcmp(tmp -> id, id)){
+                return tmp -> index;
+            }
+            tmp = tmp -> next;
+        }
+
+        return -1; //if ID is not found
+    }
+}
+
+/*show table*/
+void dump_symbol()
+{
+    printf("\n");
+    if(varCount != 0){
+        printf("The Symbol Table Dumps:\n");
+        printf("index\tID\ttype\tData\tlocals\n");
+
+        node *tmp;
+        for(int idx = 0; idx<varCount; idx++){
+            for(int i=0; i<symTableSize; i++){
+                tmp = symTable[i];
+
+                if(tmp == NULL)
+                    continue;
+
+                while(tmp != NULL){
+                    if(tmp -> index == idx){
+                        printf("%d\t%s\t", tmp -> index, tmp -> id);
+
+                        if(tmp -> type == INT_t){ // int type
+                            if(tmp -> data.assigned) //if it's been assigned value
+                                printf("int\t%d\t", tmp -> data.iValue);
+                            else
+                                printf("int\t%s\t", "unassigned");
+
+                        }
+                        else if(tmp -> type == FLOAT_t){ // float32 type
+                            if(tmp -> data.assigned) //if it's been assigned value
+                                printf("float32\t%.4lf\t", tmp -> data.fValue);
+                            else
+                                printf("float32\t%s\t", "unassigned");
+                        }
+
+                        printf("%d\n", tmp -> reg_num);
+
+
+                        break;
+                    }
+                    else{
+                        if(tmp -> next == NULL)
+                            break;
+                        tmp = tmp -> next;
+                    }
+                }
+            }
+        }
+    }
+    else{
+        printf("Symbol Table Empty.\n");
+    }
+}
+
+void writeCode(FILE *fp, char *code){
+    fp = fopen("Computer.j", "a");
+    if (fp == NULL)
+        printf("error opening file.\n");
+    else
+        fprintf(fp, "%s\n", code);
+
+    fclose(fp);
+}
+
+void genHeader()
+{
+    writeCode(file, ".class public main");
+    writeCode(file, ".super java/lang/Object");
+    writeCode(file, ".method public static main([Ljava/lang/String;)V");
+    writeCode(file, ".limit stack 10");
+    writeCode(file, ".limit locals 10");
+}
+
+void genFooter()
+{
+    writeCode(file, "return");
+    writeCode(file, ".end method");
+}
+
+void defVar(char *id, SEMTYPE type, double val)
+{
+    if(lookup_symbol(id) != -1){
+        printf("<<ERROR>> Variable \"%s\" Redefined. [line %d]\n", id, yylineno);
+        deleteGenCode(); // error: delete output file
+        exit(1); // exit program directly
+    }
+    else{
+        if(type == INT_t){ //int type
+            /*write code to file*/
+            char *buffer = (char *)malloc(512 * sizeof(char));
+            sprintf(buffer, "\tldc %d", (int)val); //ldc (value)
+            writeCode(file, buffer);
+            sprintf(buffer, "\tistore %d", idx); //istore (stkcnt)
+            writeCode(file, buffer);
+            free(buffer);
+
+            /*symbol table update*/
+            DType tmpData;
+            tmpData.iValue = (int)val;
+            tmpData.assigned = 1;
+            insert_symbol(id, INT_t, tmpData, idx);
+        }
+        else if(type == FLOAT_t){ //float32
+            /*write code to file*/
+            char *buffer = (char *)malloc(512 * sizeof(char));
+            sprintf(buffer, "\tldc %.6lf", val); //ldc (value)
+            writeCode(file, buffer);
+            sprintf(buffer, "\tfstore %d", idx); //fstore (stkcnt)
+            writeCode(file, buffer);
+            free(buffer);
+
+            /*symbol table update*/
+            DType tmpData;
+            tmpData.fValue = val;
+            tmpData.assigned = 1;
+            insert_symbol(id, FLOAT_t, tmpData, idx);
+        }
+    }
+
+}
+
+void deleteGenCode()
+{
+    // int deleteFailed = remove("Computer.j"); //indicating delete output file success or not
+
+    // if(deleteFailed)
+    //     printf("Unable to remove \"Computer.j\"\n");
+    // else
+    //     printf("Compile Error: Code Generation Failed.\n");
+
+}
+
+void arithmeticCast(SEMTYPE from, SEMTYPE to, OPERATOR op)
+{
+    if(from == to){ //if no need to cast, just perform arithmetic op
+        if(from == INT_t){
+            if(op == ADD_t){
+                writeCode(file, "\tiadd");
+            }
+            else if(op == SUB_t){
+                writeCode(file, "\tisub");
+            }
+            else if(op == MUL_t){
+                writeCode(file, "\timul");
+            }
+            else if(op == DIV_t){
+                writeCode(file, "\tidiv");
+            }
+            else if(op == MOD_t){
+                writeCode(file, "\tirem");
+            }
+        }
+        else if(from == FLOAT_t){
+            if(op == ADD_t){
+                writeCode(file, "\tfadd");
+            }
+            else if(op == SUB_t){
+                writeCode(file, "\tfsub");
+            }
+            else if(op == MUL_t){
+                writeCode(file, "\tfmul");
+            }
+            else if(op == DIV_t){
+                writeCode(file, "\tfdiv");
+            }
+            else if(op == MOD_t){ //error: mod involving float32
+                printf("<<ERROR>> MOD involving float32 type. [line %d]\n", yylineno);
+                deleteGenCode();
+                exit(1);
+            }
+        }
+    }
+    else{ //TODO: casting
+        /*
+        if(from == INT_t && to == FLOAT_t){
+            writeCode(file, "\ti2f");
+        }
+        else if(from == FLOAT_t && to == INT_t){
+            writeCode(file, "\tf2i");
+        }
+        */
+    }
+}
+
+
+void assign_id(char *id, double val)
+{
+    int ascii, key;
+    node *tmp;
+    tmp = (node *)malloc(sizeof(node));
+    tmp -> next = NULL;
+    ascii = strToKey(id);
+    key = ascii % symTableSize;
+
+    /*start searching*/
+    tmp = symTable[key];
+    while(tmp != NULL){
+        if(!strcmp(tmp -> id, id)){
+            // assign value to table
+            if(tmp -> type == INT_t){ //int
+                tmp -> data.assigned = 1;
+                tmp -> data.iValue = (int)val;
+            }
+            else if(tmp -> type == FLOAT_t){ //float32
+                tmp -> data.assigned = 1;
+                tmp -> data.fValue = val;
+            }
+        }
+        tmp = tmp -> next;
+    }
+}
+
+/*to get id value*/
+double get_idVal(char *id){
+    int ascii, key;
+    node *tmp;
+    tmp = (node *)malloc(sizeof(node));
+    tmp -> next = NULL;
+
+    ascii = strToKey(id);
+    key = ascii % symTableSize;
+
+    /*start searching*/
+    tmp = symTable[key];
+    while(tmp != NULL){
+        if(!strcmp(tmp -> id, id)){
+            if(tmp -> type == INT_t){ //int type
+                return (double)(tmp -> data.iValue);
+            }
+            else if(tmp -> type == FLOAT_t){ //float32 type
+                return tmp -> data.fValue;
+            }
+        }
+        tmp = tmp -> next;
+    }
+}
+
+/*to get id type*/
+SEMTYPE get_idType(char *id){
+    int ascii, key;
+    node *tmp;
+    tmp = (node *)malloc(sizeof(node));
+    tmp -> next = NULL;
+
+    ascii = strToKey(id);
+    key = ascii % symTableSize;
+
+    /*start searching*/
+    tmp = symTable[key];
+    while(tmp != NULL){
+        if(!strcmp(tmp -> id, id)){
+            return tmp -> type;
+        }
+        tmp = tmp -> next;
+    }
+}
+
+/*to generate labels*/
+char *genLabel(){
+    char *str = (char *)malloc(512 * sizeof(char));
+    sprintf(str, "Label_%d", labelCount++);
+    return str;
+}
+
+/*to get the labels that has already been generated*/
+char *getLabel(int labNum){
+    char *str = (char *)malloc(512 * sizeof(char));
+    sprintf(str, "Label_%d", labNum);
+    return str;
+}
+
+
+

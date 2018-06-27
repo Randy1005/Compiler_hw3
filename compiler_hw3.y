@@ -75,9 +75,14 @@ int exitCount = 0;
 /*for storing code as linked list*/
 codeList *code_list = NULL;
 
-/*error flag, if flag*/
+/*
+error flag, if flag
+constFlag, idFlag (for print_func)
+*/
 int ERR = 0;
 int if_flag = 0;
+int constFlag = 0;
+int idFlag = 0;
 
 %}
 
@@ -365,6 +370,9 @@ equality_op: EQ {$$ = EQ_t;}
 
 relational_expr: additive_expr
     | relational_expr relational_op additive_expr
+    {
+
+    }
 ;
 
 relational_op: '<'
@@ -438,6 +446,7 @@ primary_expr: ID
                     ERR = 1;
                 }
                 else{
+                    idFlag = 1;
                     if(get_idType($1.id) == INT_t){
                         char *buffer = (char *)malloc(512 * sizeof(char));
                         sprintf(buffer, "\tiload %d", lookup_symbol($1.id));
@@ -457,6 +466,7 @@ primary_expr: ID
     | constant
     {
         if(!VAR_flag){
+            constFlag = 1;
             char *buffer = (char *)malloc(512 * sizeof(char));
             if($1.type == INT_t){
                 sprintf(buffer, "\tldc %d", (int)$1.f_val);
@@ -488,28 +498,55 @@ constant: I_CONST
 print_func: print_func_op '(' equality_expr ')' NEWLINE
             {
                 if($1 == PRINT_t){
-                    if(get_idType($3.id) == INT_t){
+                    if(get_idType($3.id) == INT_t && idFlag){
                         writeCode("\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
                         writeCode("\tswap");
                         writeCode("\tinvokevirtual java/io/PrintStream/print(I)V");
                     }
-                    else if(get_idType($3.id) == FLOAT_t){
+                    else if(get_idType($3.id) == FLOAT_t && idFlag){
                         writeCode("\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
                         writeCode("\tswap");
                         writeCode("\tinvokevirtual java/io/PrintStream/print(F)V");
                     }
+                    else if(constFlag && $3.type == INT_t){
+                        writeCode("\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
+                        writeCode("\tswap");
+                        writeCode("\tinvokevirtual java/io/PrintStream/print(I)V");
+                    }
+                    else if(constFlag && $3.type == FLOAT_t){
+                        writeCode("\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
+                        writeCode("\tswap");
+                        writeCode("\tinvokevirtual java/io/PrintStream/print(F)V");
+                    }
+
+                    idFlag = 0;
+                    constFlag = 0;
+
                 }
                 else if($1 == PRINTLN_t){
-                    if(get_idType($3.id) == INT_t){
+                    if(get_idType($3.id) == INT_t && idFlag){
                         writeCode("\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
                         writeCode("\tswap");
                         writeCode("\tinvokevirtual java/io/PrintStream/println(I)V");
                     }
-                    else if(get_idType($3.id) == FLOAT_t){
+                    else if(get_idType($3.id) == FLOAT_t && idFlag){
                         writeCode("\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
                         writeCode("\tswap");
                         writeCode("\tinvokevirtual java/io/PrintStream/println(F)V");
                     }
+                     else if(constFlag && $3.type == INT_t){
+                        writeCode("\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
+                        writeCode("\tswap");
+                        writeCode("\tinvokevirtual java/io/PrintStream/println(I)V");
+                    }
+                    else if(constFlag && $3.type == FLOAT_t){
+                        writeCode("\tgetstatic java/lang/System/out Ljava/io/PrintStream;");
+                        writeCode("\tswap");
+                        writeCode("\tinvokevirtual java/io/PrintStream/println(F)V");
+                    }
+
+                    idFlag = 0;
+                    constFlag = 0;
                 }
             }
     | print_func_op '(' QUOTA STRING QUOTA ')' NEWLINE
@@ -965,20 +1002,12 @@ char *getEXIT(int exitNum){
 void relaCast(SEMTYPE from, SEMTYPE to, OPERATOR op)
 {
     if(from == to){ //if no need to cast
-        if(from == INT_t){
-            if(op == EQ_t || op == NE_t){
-                writeCode("\tisub");
-            }
-            else if(op == GE_t){
-
-            }
-            else if(op == LE_t){
-
-            }
+        if(from == INT_t || from == FLOAT_t){
+            writeCode("\tisub");
         }
     }
     else{
-        // TODO
+        // TODO: relational casting
     }
 }
 

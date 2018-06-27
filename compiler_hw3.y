@@ -38,6 +38,9 @@ void defVar(char *id, SEMTYPE type, double val);
 /*arithmetic casting*/
 void arithmeticCast(SEMTYPE from, SEMTYPE to, OPERATOR op);
 
+/*relational casting*/
+void relaCast(SEMTYPE from, SEMTYPE to, OPERATOR op);
+
 /*get ID type*/
 SEMTYPE get_idType(char *id);
 
@@ -46,6 +49,12 @@ void assign_id(char *id, double val);
 
 /*get id value*/
 double get_idVal(char *id);
+
+/*for generating labels & EXITs*/
+char *genEXIT();
+char *getEXIT(int exitbNum);
+char *genLabel();
+char *getLabel(int labelNum);
 
 /*count variables*/
 int varCount = 0;
@@ -59,14 +68,16 @@ int idx = 0; //for assigning index to entries (not actual keys)
 /*for symbol table*/
 node *symTable[10];
 
-/*for generating labels*/
+/*for counting labels & EXITs*/
 int labelCount = 0;
+int exitCount = 0;
 
 /*for storing code as linked list*/
 codeList *code_list = NULL;
 
-/*error flag*/
+/*error flag, if flag*/
 int ERR = 0;
+int if_flag = 0;
 
 %}
 
@@ -95,7 +106,10 @@ int ERR = 0;
 %type <rule_type> primary_expr constant
 %type <rule_type> type
 
+
 %type <intVal> add_op mul_op print_func_op assignment_op equality_op relational_op
+
+%type <intVal> MARKER
 
 
 %start program
@@ -114,8 +128,15 @@ stat: declaration
     | compound_stat
     | expression_stat
     | print_func
-    | selection_stat
+    | selection_stat    {if_flag = 1;}
 ;
+
+MARKER:
+{
+    $$ = labelCount;
+}
+;
+
 
 declaration: VAR ID type '=' initializer NEWLINE
             {
@@ -140,7 +161,16 @@ initializer: equality_expr
 ;
 
 compound_stat: '{' '}'
-    | '{' block_item_list '}'
+    | '{'
+    block_item_list
+    MARKER
+    {
+        char *buffer = (char *)malloc(512 * sizeof(char));
+        sprintf(buffer, "%s:", genLabel(labelCount));
+        writeCode(buffer);
+        free(buffer);
+    }
+    '}'
 ;
 
 block_item_list: block_item
@@ -158,7 +188,7 @@ expression_stat: expr NEWLINE
     | NEWLINE
 ;
 
-expr: equality_expr
+expr: equality_expr {$$ = $1;}
     | ID '=' expr
     {
         assign_id($1.id, $3.f_val);
@@ -307,10 +337,30 @@ assignment_op: ADDASGN  {$$ = ADDASGN_t;}
 
 equality_expr: relational_expr
     | equality_expr equality_op relational_expr
+    {
+        if($2 == EQ_t){
+            relaCast($1.type, $3.type, EQ_t); //test equality
+            char *buffer = (char *)malloc(512 * sizeof(char));
+            sprintf(buffer, "\tifne %s", getLabel(labelCount));
+            writeCode(buffer);
+            free(buffer);
+
+            $$.type = $2;
+        }
+        else if($2 == NE_t){
+            relaCast($1.type, $3.type, NE_t); //test equality
+            char *buffer = (char *)malloc(512 * sizeof(char));
+            sprintf(buffer, "\tifeq %s", getLabel(labelCount));
+            writeCode(buffer);
+            free(buffer);
+
+            $$.type = $2;
+        }
+    }
 ;
 
-equality_op: EQ
-    | NE
+equality_op: EQ {$$ = EQ_t;}
+    | NE    {$$ = NE_t;}
 ;
 
 relational_expr: additive_expr
@@ -504,7 +554,7 @@ int main(int argc, char** argv)
     yyparse();
     genFooter(); //footer code
 
-    //printCode();
+    // printCode();
     if(!ERR)
         genCode(file);
 
@@ -890,11 +940,46 @@ char *genLabel(){
     return str;
 }
 
+/*to generate EXITs*/
+char *genEXIT(){
+    char *str = (char *)malloc(512 * sizeof(char));
+    sprintf(str, "EXIT_%d", exitCount++);
+    return str;
+}
+
 /*to get the labels that has already been generated*/
 char *getLabel(int labNum){
     char *str = (char *)malloc(512 * sizeof(char));
     sprintf(str, "Label_%d", labNum);
     return str;
+}
+
+/*to get the labels that has already been generated*/
+char *getEXIT(int exitNum){
+    char *str = (char *)malloc(512 * sizeof(char));
+    sprintf(str, "EXIT_%d", exitNum);
+    return str;
+}
+
+/*relational ops*/
+void relaCast(SEMTYPE from, SEMTYPE to, OPERATOR op)
+{
+    if(from == to){ //if no need to cast
+        if(from == INT_t){
+            if(op == EQ_t || op == NE_t){
+                writeCode("\tisub");
+            }
+            else if(op == GE_t){
+
+            }
+            else if(op == LE_t){
+
+            }
+        }
+    }
+    else{
+        // TODO
+    }
 }
 
 

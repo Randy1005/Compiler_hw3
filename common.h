@@ -38,7 +38,7 @@ typedef struct rule_type {
 /*or else output duplicate 'ldc'*/
 int VAR_flag;
 
-/*for backpatching*/
+/*for storing code*/
 typedef struct CodeList{
     char *code;
     struct CodeList *nextline;

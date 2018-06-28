@@ -112,9 +112,10 @@ int idFlag = 0;
 %type <rule_type> type
 
 
+
 %type <intVal> add_op mul_op print_func_op assignment_op equality_op relational_op
 
-%type <intVal> MARKER
+%type <intVal> _if
 
 
 %start program
@@ -136,11 +137,6 @@ stat: declaration
     | selection_stat    {if_flag = 1;}
 ;
 
-MARKER:
-{
-    $$ = labelCount;
-}
-;
 
 
 declaration: VAR ID type '=' initializer NEWLINE
@@ -166,16 +162,7 @@ initializer: equality_expr
 ;
 
 compound_stat: '{' '}'
-    | '{'
-    block_item_list
-    MARKER
-    {
-        char *buffer = (char *)malloc(512 * sizeof(char));
-        sprintf(buffer, "%s:", genLabel(labelCount));
-        writeCode(buffer);
-        free(buffer);
-    }
-    '}'
+    | '{' block_item_list '}'
 ;
 
 block_item_list: block_item
@@ -185,8 +172,37 @@ block_item_list: block_item
 block_item: stat
 ;
 
-selection_stat: IF '(' expr ')' stat ELSE stat
-    | IF '(' expr ')' stat
+else_stmt: ELSE stat
+    |
+;
+
+_if: IF
+{
+    $$ = labelCount;
+    labelCount++;
+}
+;
+
+selection_stat: _if '(' expr ')'
+{
+    char *buffer = (char *)malloc(512 * sizeof(char));
+    sprintf(buffer, " Label_%d", $1);
+    writeCode(buffer);
+}
+stat
+{
+    char *buffer = (char *)malloc(512 * sizeof(char));
+    sprintf(buffer, "\tgoto EXIT_%d", $1);
+    writeCode(buffer);
+    sprintf(buffer, "Label_%d:", $1);
+    writeCode(buffer);
+}
+else_stmt
+{
+    char *buffer = (char *)malloc(512 * sizeof(char));
+    sprintf(buffer, "EXIT_%d:", $1);
+    writeCode(buffer);
+}
 ;
 
 expression_stat: expr NEWLINE
@@ -346,8 +362,7 @@ equality_expr: relational_expr
         if($2 == EQ_t){
             relaCast($1.type, $3.type, EQ_t); //test equality
             char *buffer = (char *)malloc(512 * sizeof(char));
-            sprintf(buffer, "\tifne %s", getLabel(labelCount));
-            writeCode(buffer);
+            writeCode("ifne");
             free(buffer);
 
             $$.type = $2;
@@ -355,8 +370,7 @@ equality_expr: relational_expr
         else if($2 == NE_t){
             relaCast($1.type, $3.type, NE_t); //test equality
             char *buffer = (char *)malloc(512 * sizeof(char));
-            sprintf(buffer, "\tifeq %s", getLabel(labelCount));
-            writeCode(buffer);
+            writeCode("ifeq");
             free(buffer);
 
             $$.type = $2;
@@ -371,14 +385,41 @@ equality_op: EQ {$$ = EQ_t;}
 relational_expr: additive_expr
     | relational_expr relational_op additive_expr
     {
+        if($2 == LT_t){
+            relaCast($1.type, $3.type, LT_t);
+            writeCode("ifge");
+
+            $$.type = $2;
+
+        }
+        else if($2 == GT_t){
+            relaCast($1.type, $3.type, GT_t);
+            writeCode("ifle");
+
+            $$.type = $2;
+        }
+        else if($2 == LE_t){
+            relaCast($1.type, $3.type, LE_t);
+            writeCode("ifgt");
+
+            $$.type = $2;
+
+        }
+        else if($2 == GE_t){
+            relaCast($1.type, $3.type, GE_t);
+            writeCode("iflt");
+
+            $$.type = $2;
+
+        }
 
     }
 ;
 
-relational_op: '<'
-    | '>'
-    | LTE
-    | MTE
+relational_op: '<'  {$$ = LT_t;}
+    | '>'   {$$ = GT_t;}
+    | LTE   {$$ = LE_t;}
+    | MTE   {$$ = GE_t;}
 ;
 
 additive_expr: multiplicative_expr  {$$ = $1;}
@@ -431,12 +472,84 @@ mul_op: '*' {$$ = MUL_t;}
 
 prefix_expr: postfix_expr
     | INC prefix_expr
+    {
+        assign_id($2.id, get_idVal($2.id) + 1.0);
+        writeCode("\tldc 1");
+        arithmeticCast($2.type, $2.type, ADD_t);
+
+        if($2.type == INT_t){
+            char *buffer = (char *)malloc(512 * sizeof(char));
+            sprintf(buffer, "\tistore %d", lookup_symbol($2.id));
+            writeCode(buffer);
+            free(buffer);
+        }
+        else if($2.type == FLOAT_t){
+            char *buffer = (char *)malloc(512 * sizeof(char));
+            sprintf(buffer, "\tfstore %d", lookup_symbol($2.id));
+            writeCode(buffer);
+            free(buffer);
+        }
+    }
     | DEC prefix_expr
+    {
+        assign_id($2.id, get_idVal($2.id) - 1.0);
+        writeCode("\tldc 1");
+        arithmeticCast($2.type, $2.type, SUB_t);
+
+        if($2.type == INT_t){
+            char *buffer = (char *)malloc(512 * sizeof(char));
+            sprintf(buffer, "\tistore %d", lookup_symbol($2.id));
+            writeCode(buffer);
+            free(buffer);
+        }
+        else if($2.type == FLOAT_t){
+            char *buffer = (char *)malloc(512 * sizeof(char));
+            sprintf(buffer, "\tfstore %d", lookup_symbol($2.id));
+            writeCode(buffer);
+            free(buffer);
+        }
+    }
 ;
 
 postfix_expr: primary_expr
     | postfix_expr INC
+    {
+        assign_id($1.id, get_idVal($1.id) + 1.0);
+        writeCode("\tldc 1");
+        arithmeticCast($1.type, $1.type, ADD_t);
+
+        if($1.type == INT_t){
+            char *buffer = (char *)malloc(512 * sizeof(char));
+            sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
+            writeCode(buffer);
+            free(buffer);
+        }
+        else if($1.type == FLOAT_t){
+            char *buffer = (char *)malloc(512 * sizeof(char));
+            sprintf(buffer, "\tfstore %d", lookup_symbol($1.id));
+            writeCode(buffer);
+            free(buffer);
+        }
+    }
     | postfix_expr DEC
+    {
+        assign_id($1.id, get_idVal($1.id) - 1.0);
+        writeCode("\tldc 1");
+        arithmeticCast($1.type, $1.type, SUB_t);
+
+        if($1.type == INT_t){
+            char *buffer = (char *)malloc(512 * sizeof(char));
+            sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
+            writeCode(buffer);
+            free(buffer);
+        }
+        else if($1.type == FLOAT_t){
+            char *buffer = (char *)malloc(512 * sizeof(char));
+            sprintf(buffer, "\tfstore %d", lookup_symbol($1.id));
+            writeCode(buffer);
+            free(buffer);
+        }
+    }
 ;
 
 primary_expr: ID
@@ -750,8 +863,14 @@ void genCode(FILE *fp){
     else{
         tmp = code_list;
         while(tmp != NULL){
-            fprintf(fp, "%s\n", tmp -> code);
-            tmp = tmp -> nextline;
+            if(tmp -> code[0] == 'i' && tmp -> code[1] == 'f'){
+                fprintf(fp, "%s", tmp -> code);
+                tmp = tmp -> nextline;
+            }
+            else{
+                fprintf(fp, "%s\n", tmp -> code);
+                tmp = tmp -> nextline;
+            }
         }
     }
     fclose(fp);

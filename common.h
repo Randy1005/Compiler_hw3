@@ -7,7 +7,7 @@
 #include <ctype.h>
 
 typedef enum { VOID_t, INT_t, FLOAT_t ,STRING_t } SEMTYPE;
-typedef enum { ADD_t, SUB_t, MUL_t, DIV_t, MOD_t, LT_t, LE_t, EQ_t, GE_t, GT_t, NE_t, AND_t, OR_t, NOT_t, NONE_t, ADDASGN_t, SUBASGN_t, MULASGN_t, DIVASGN_t, MODASGN_t, PRINTLN_t, PRINT_t } OPERATOR;
+typedef enum { ADD_t, SUB_t, MUL_t, DIV_t, MOD_t, LT_t, LE_t, EQ_t, GE_t, GT_t, NE_t, AND_t, OR_t, NOT_t, NONE_t, ASGN_t, ADDASGN_t, SUBASGN_t, MULASGN_t, DIVASGN_t, MODASGN_t, PRINTLN_t, PRINT_t } OPERATOR;
 
 /* data_type structure to store integer, double values, and whether a variable is assigned value yet*/
 typedef struct data_type {

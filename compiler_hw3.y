@@ -7,7 +7,7 @@ extern int yylex();
 
 /*display enum text*/
 static char *SEM_str[] = {"VOID_t", "INT_t", "FLOAT_t", "STRING_t"};
-static char *OP_str[] = {"ADD_t", "SUB_t", "MUL_t", "DIV_t", "MOD_t", "LT_t", "LE_t", "EQ_t", "GE_t", "GT_t", "NE_t", "AND_t", "OR_t", "NOT_t", "NONE_t",  "ADDASGN_t", "SUBASGN_t", "MULASGN_t", "DIVASGN_t", "MODASGN_t"};
+static char *OP_str[] = {"ADD_t", "SUB_t", "MUL_t", "DIV_t", "MOD_t", "LT_t", "LE_t", "EQ_t", "GE_t", "GT_t", "NE_t", "AND_t", "OR_t", "NOT_t", "NONE_t", "ASGN_t", "ADDASGN_t", "SUBASGN_t", "MULASGN_t", "DIVASGN_t", "MODASGN_t"};
 
 FILE *file;
 
@@ -76,11 +76,10 @@ int exitCount = 0;
 codeList *code_list = NULL;
 
 /*
-error flag, if flag
+error flag
 constFlag, idFlag (for print_func)
 */
 int ERR = 0;
-int if_flag = 0;
 int constFlag = 0;
 int idFlag = 0;
 
@@ -134,7 +133,7 @@ stat: declaration
     | compound_stat
     | expression_stat
     | print_func
-    | selection_stat    {if_flag = 1;}
+    | selection_stat
 ;
 
 
@@ -215,17 +214,22 @@ expr: equality_expr {$$ = $1;}
         assign_id($1.id, $3.f_val);
 
         if(get_idType($1.id) == INT_t){
+            arithmeticCast($3.type, get_idType($1.id), ASGN_t);
+
             char *buffer = (char *)malloc(512 * sizeof(char));
             sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
             writeCode(buffer);
             free(buffer);
         }
         else if(get_idType($1.id) == FLOAT_t){
+            arithmeticCast($3.type, get_idType($1.id), ASGN_t);
+
             char *buffer = (char *)malloc(512 * sizeof(char));
             sprintf(buffer, "\tfstore %d", lookup_symbol($1.id));
             writeCode(buffer);
             free(buffer);
         }
+
     }
     | prefix_expr assignment_op expr
     {
@@ -235,7 +239,7 @@ expr: equality_expr {$$ = $1;}
             assign_id($1.id, get_idVal($1.id) + $3.f_val);
 
             /*generate code*/
-            arithmeticCast($1.type, $3.type, ADD_t);
+            arithmeticCast($3.type, $1.type, ADD_t);
             if($1.type == INT_t){
                 char *buffer = (char *)malloc(512 * sizeof(char));
                 sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
@@ -255,7 +259,7 @@ expr: equality_expr {$$ = $1;}
             assign_id($1.id, get_idVal($1.id) - $3.f_val);
 
             /*generate code*/
-            arithmeticCast($1.type, $3.type, SUB_t);
+            arithmeticCast($3.type, $1.type, SUB_t);
             if($1.type == INT_t){
                 char *buffer = (char *)malloc(512 * sizeof(char));
                 sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
@@ -275,7 +279,7 @@ expr: equality_expr {$$ = $1;}
             assign_id($1.id, get_idVal($1.id) * $3.f_val);
 
             /*generate code*/
-            arithmeticCast($1.type, $3.type, MUL_t);
+            arithmeticCast($3.type, $1.type, MUL_t);
             if($1.type == INT_t){
                 char *buffer = (char *)malloc(512 * sizeof(char));
                 sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
@@ -299,7 +303,7 @@ expr: equality_expr {$$ = $1;}
                 assign_id($1.id, get_idVal($1.id) / $3.f_val);
 
                 /*generate code*/
-                arithmeticCast($1.type, $3.type, DIV_t);
+                arithmeticCast($3.type, $1.type, DIV_t);
                 if($1.type == INT_t){
                     char *buffer = (char *)malloc(512 * sizeof(char));
                     sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
@@ -328,7 +332,7 @@ expr: equality_expr {$$ = $1;}
                 assign_id($1.id, (int)get_idVal($1.id) % (int)$3.f_val);
 
                 /*generate code*/
-                arithmeticCast($1.type, $3.type, MOD_t);
+                arithmeticCast($3.type, $1.type, MOD_t);
                 if($1.type == INT_t){
                     char *buffer = (char *)malloc(512 * sizeof(char));
                     sprintf(buffer, "\tistore %d", lookup_symbol($1.id));
@@ -425,6 +429,7 @@ relational_op: '<'  {$$ = LT_t;}
 additive_expr: multiplicative_expr  {$$ = $1;}
     | additive_expr add_op multiplicative_expr
     {
+
         arithmeticCast($1.type, $3.type, $2); //write code
 
         /*return values*/
@@ -452,15 +457,24 @@ multiplicative_expr: prefix_expr    {$$ = $1;}
             ERR = 1;
         }
 
+        if($2 == MOD_t && ($1.type == FLOAT_t || $3.type == FLOAT_t)){
+            printf("<<ERROR>> MOD Involving float32. [line %d]\n", yylineno);
+            ERR = 1;
+        }
+
         arithmeticCast($1.type, $3.type, $2); // write code
 
         /*return values*/
-        if($2 == MUL_t)
+        if($2 == MUL_t){
             $$.f_val = $1.f_val * $3.f_val;
-        else if($2 == DIV_t)
+        }
+        else if($2 == DIV_t){
             $$.f_val = $1.f_val / $3.f_val;
-        else if($2 == MOD_t)
-            $$.i_val = (int)$1.f_val % (int)$3.f_val;
+        }
+        else if($2 == MOD_t){
+            $$.f_val = (int)$1.f_val % (int)$3.f_val;
+        }
+
 
     }
 ;
@@ -573,7 +587,8 @@ primary_expr: ID
                         free(buffer);
                         // float32_occur = 1;
                     }
-                    $$ = $1;
+
+                    $$.type = get_idType($1.id);
                 }
             }
     | constant
@@ -582,9 +597,11 @@ primary_expr: ID
             constFlag = 1;
             char *buffer = (char *)malloc(512 * sizeof(char));
             if($1.type == INT_t){
+                $1.type = INT_t;
                 sprintf(buffer, "\tldc %d", (int)$1.f_val);
             }
             else if($1.type == FLOAT_t){
+                $1.type = FLOAT_t;
                 sprintf(buffer, "\tldc %.6lf", $1.f_val);
                 // float32_occur = 1;
             }
